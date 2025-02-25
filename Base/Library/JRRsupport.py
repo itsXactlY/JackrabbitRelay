@@ -678,8 +678,8 @@ def Yesterday(ds=None):
         date=datetime.datetime.strptime(ds, '%Y-%m-%d')
     else:
         date=datetime.datetime.now()
-        yesterday=date-datetime.timedelta(days=1)
-        return yesterday.strftime('%Y-%m-%d')
+    yesterday=date-datetime.timedelta(days=1)
+    return yesterday.strftime('%Y-%m-%d')
 
 
 # Dirty support function to block HTML exchange payloads
