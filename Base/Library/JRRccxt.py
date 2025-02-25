@@ -8,7 +8,6 @@
 import sys
 sys.path.append('/home/JackrabbitRelay2/Base/Library')
 import os
-import signal
 import json
 from datetime import datetime
 
@@ -159,13 +158,9 @@ class ccxtCrypto:
             except Exception as e:
                 self.Log.Error("Connecting to exchange",str(e))
         else:
-            if self.Exchange=="ftxus":
-                try:
-                    self.Broker=ccxt.ftx({ 'hostname': 'ftx.us', })
-                except Exception as e:
-                    self.Log.Error("Connecting to exchange",str(e))
-            else:
-                self.Log.Error(exchangeName,"Exchange not supported")
+            '''if self.Exchange=="ftxus": # CCXT has deprecated FTX exchange
+            else:'''
+            self.Log.Error(self.Broker.name.lower(),"Exchange not supported")
 
         # If Active is empty, then use only PUBLIC API
         if self.Active!=[]:
@@ -177,12 +172,12 @@ class ccxtCrypto:
         if "Sandbox" in self.Active:
             self.Broker.setSandboxMode(True)
 
-        # Set special setting for specific exchange.
-
-        if self.Exchange=="ftx" and self.Active['Account']!='MAIN':
+        # Set special setting for specific exchange.        
+        # deprecated FTX
+        '''if self.Exchange=="ftx" and self.Active['Account']!='MAIN':
             self.Broker.headers['FTX-SUBACCOUNT']=self.Active['Account']
         elif self.Exchange=="ftxus" and self.Active['Account']!='MAIN':
-            self.Broker.headers['FTXUS-SUBACCOUNT']=self.Active['Account']
+            self.Broker.headers['FTXUS-SUBACCOUNT']=self.Active['Account']'''
 
         # Cycle through required login types. Each exchange could have different login
         # requireents. Try to soft through each requirement and handle it.
@@ -244,10 +239,10 @@ class ccxtCrypto:
         if pair[0]=='.' or pair.find(".d")>-1:
             self.Log.Error('Get Markets',pair+" is not tradable on this exchange")
 
-        if pair not in exchange.markets:
+        if pair not in self.Exchange.markets:
             self.Log.Error('Get Markets',pair+" is not traded on this exchange")
 
-        if 'active' in exchange.markets[pair]:
+        if 'active' in self.Exchange.markets[pair]:
             if self.Markets[pair]['active']==False:
                 self.Log.Error('Get Markets',pair+" is not active on this exchange")
 

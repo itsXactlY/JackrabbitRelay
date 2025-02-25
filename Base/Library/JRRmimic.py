@@ -407,10 +407,11 @@ class mimic:
 
     # Welcome to the nightmare: placing and maintaining orders.
 
-    # From the stand pint of Mimic, this is the most tedious part of the entire framework. There are a lot of
+    # From the stand point of Mimic, this is the most tedious part of the entire framework. There are a lot of
     # moving parts here, including the layout of Mimic itself. Choosing whether to follow the crypto standard vs
     # the forex standard is the most pivotal of the process. Where forex has such refined demo accounts already,
-    # I am inclined to focus on a crypto direction. I am leaning towards the more understandable format of forx
+    # I am inclined to focus on a crypto direction. I am leaning towards the more understandable format of forex
+
     # though for the actual implementation.
 
     # PlaceOrder(exchange, Active, pair=pair, orderType=orderType,

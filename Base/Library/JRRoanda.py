@@ -7,11 +7,9 @@
 
 import sys
 sys.path.append('/home/JackrabbitRelay2/Base/Library')
-import os
 import math
-import signal
 import json
-import time
+
 from datetime import datetime
 
 import oandapyV20
@@ -25,9 +23,10 @@ import oandapyV20.endpoints.orders as v20Orders
 import oandapyV20.endpoints.positions as v20Positions
 import oandapyV20.endpoints.trades as v20Trades
 import oandapyV20.endpoints.transactions as v20Transactions
-import oandapyV20.contrib.requests as v20Requests
+'''import oandapyV20.contrib.requests as v20Requests
 import oandapyV20.contrib.generic as v20Generic
-import oandapyV20.contrib.factories as v20Factories
+import oandapyV20.contrib.factories as v20Factories'''
+
 
 import JRRsupport
 

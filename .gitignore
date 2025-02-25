@@ -1,0 +1,17 @@
+__pycache__
+*.pid
+Config/*.cfg
+*.log
+*.png
+*.PNG
+serve_history.sh
+*.html
+log
+inspect
+testing.py
+Data/Mimic/*.history
+Data/Mimic/*.wallet
+
+Data/*.symbolmap
+Data/*.MaxAssets
+Extras/*.cfg

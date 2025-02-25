@@ -697,7 +697,7 @@ def OrderProcessor(osh):
                 if Orphan['Class'].lower()!='orphan':
                     continue
                 foumd=False
-                Orphan=Orphanlist[order]
+                Orphan=OrphanList[order]
                 id=Orphan['ID']
                 cid=Orphan['cID']
                 for cur in openOrders:
@@ -712,9 +712,9 @@ def OrderProcessor(osh):
 
     except Exception as err:
         relay.JRLog.Write(f"OT OANDA Broke {sys.exc_info()[-1].tb_lineno}: {idx}, {err}")
-#    shLock.Unlock()
+    # shLock.Unlock()
 
-    EndTime=datetime.datetime.now()
-#    JRLog.Write(f"OP OANDA Elapsed {idx}/{len(OrphanList)}: {EndTime-StartTime} seconds")
+    # EndTime=datetime.datetime.now()
+    # JRLog.Write(f"OP OANDA Elapsed {idx}/{len(OrphanList)}: {EndTime-StartTime} seconds")
 
     return 'Waiting'
