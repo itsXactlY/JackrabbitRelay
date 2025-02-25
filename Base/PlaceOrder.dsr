@@ -7,7 +7,6 @@
 
 import sys
 sys.path.append('/home/JackrabbitRelay2/Base/Library')
-import os
 import json
 
 import JRRsupport
@@ -27,7 +26,7 @@ def main():
     # Make sure the webhook is available
 
     if 'Webhook' not in relay.Active:
-        relay.JRLog.Error(relay.Exchange, f"{self.Exchange}: no webhook, can't process order")
+        relay.JRLog.Error(relay.Exchange, f"{relay.Exchange}: no webhook, can't process order")
 
     # Now lets get down to business. The processed order is in:
     #    relay.Order

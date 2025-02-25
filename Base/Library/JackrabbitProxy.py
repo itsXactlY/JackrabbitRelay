@@ -16,11 +16,8 @@
 import sys
 sys.path.append('/home/JackrabbitRelay2/Base/Library')
 import os
-import signal
-import atexit
 import json
 import requests
-from datetime import datetime
 
 # Framework APIs
 
