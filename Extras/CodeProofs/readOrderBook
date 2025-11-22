@@ -116,63 +116,86 @@ if relay.GetFramework()=='ccxt':
     spread=maxSprice-maxBprice
     print(f"{'-'*4:4} {'-'*12:12} {'-'*12:12} {'-'*12:12} {'-'*12:12} {'-'*12:12}")
     print(f"MAX  {maxBorders:12.5f} {maxBprice:12.5f} {spread:12.5f} {maxSprice:12.5f} {maxSorders:12.5f}")
-elif relay.GetFramework()=='oanda':
-    BuyPrice=ticker['Bid']
-    SellPrice=ticker['Ask']
 
-    # Get order book
+elif relay.GetFramework() == 'ccapi':
+    import fast_mssql, json
 
-    lp=0
-    sp=0
-    l=len(orderbook)
-    buyIDX=0
-    sellIDX=0
+    CONN_STR = (
+        "DRIVER={ODBC Driver 18 for SQL Server};"
+        "SERVER=localhost;"
+        "DATABASE=BTQ_MarketData;"
+        "UID=SA;"
+        "PWD=q?}33YIToo:H%xue$Kr*;"
+        "TrustServerCertificate=yes;"
+    )
 
-    obl=[]
-    pp=0
-    idx=0
-    for cur in orderbook:
-        buy=(float(cur['longCountPercent'])/100)*l
-        price=round(float(cur['price']),4)
-        sell=(float(cur['shortCountPercent'])/100)*l
+    raw_symbol = asset
+    exchange   = exchangeName
 
-        cp=price
-        if pp<BuyPrice and BuyPrice<=cp:
-            buyIDX=idx-1
-        if pp<SellPrice and SellPrice<=cp:
-            sellIDX=idx
+    s1 = raw_symbol.replace("/", "-")
+    s2 = raw_symbol.replace("/", "")
+    symbols_list = {raw_symbol, s1, s2}
+    symbols_in = "', '".join(symbols_list)
 
-        lp+=buy
-        sp+=sell
+    # NOLOCK and FORCESEEK to prevent blocking
+    sql = f"""
+    SELECT TOP (1) bids, asks, [timestamp]
+    FROM dbo.orderbook_snapshots WITH (NOLOCK, FORCESEEK)
+    WHERE exchange = '{exchange}'
+      AND symbol IN ('{symbols_in}')
+      AND market_type = 'spot'
+    ORDER BY [timestamp] DESC
+    OPTION (MAXDOP 1);
+    """
 
-        obl.append([buy,price,sell])
-        pp=cp
-        idx+=1
+    rows = fast_mssql.fetch_data_from_db(CONN_STR, sql)
+    
+    if not rows:
+        print(f"No orderbook snapshot in DB for {exchange} {raw_symbol}")
+        sys.exit(1)
+    
+    bids_json, asks_json, ts = rows[0]
+    bids = json.loads(bids_json) if isinstance(bids_json, str) else bids_json
+    asks = json.loads(asks_json) if isinstance(asks_json, str) else asks_json
+    
+    print(f"✅ Latest orderbook snapshot ({ts}):")
+    print(f"   Best Bid: {bids[0] if bids else 'N/A'}")
+    print(f"   Best Ask: {asks[0] if asks else 'N/A'}")
 
-    print(f"{Blank:3} {'Volume':>12} {'Buy':>12} {'Sell':>12} {'Volume':>12} {'Spread':>12}")
-    print(f"{Blank:3} {Blank:12} {BuyPrice:12.5f} {SellPrice:12.5f} {Blank:12} {BuyPrice-SellPrice:12.5f}")
-    print(f"{'-'*3:3} {'-'*12:12} {'-'*12:12} {'-'*12:12} {'-'*12:12} {'-'*12:12}")
+    if not bids or not asks:
+        print("Orderbook snapshot has no bids/asks.")
+        sys.exit(1)
 
-    c=1
-    maxBorders=0
-    maxSorders=0
-    maxBprice=0
-    maxSprice=0
-    for i in range(depth):
-        buy=obl[buyIDX-i][0]
-        bprice=obl[buyIDX-i][1]
-        sprice=obl[sellIDX+i][1]
-        sell=obl[sellIDX+i][2]
-        spread=sprice-bprice
-        if buy>maxBorders:
-            maxBorders=buy
-            maxBprice=bprice
-        if sell>maxSorders:
-            maxSorders=sell
-            maxSprice=sprice
-        print(f"{c:3} {buy:12.5f} {bprice:12.5f} {sprice:12.5f} {sell:12.5f} {spread:12.5f}")
-        c+=1
+    # effective depth = min(requested depth, available levels)
+    eff_depth = min(depth, len(bids), len(asks))
 
-    spread=maxSprice-maxBprice
-    print(f"{'-'*3:3} {'-'*12:12} {'-'*12:12} {'-'*12:12} {'-'*12:12} {'-'*12:12}")
-    print(f"MAX {maxBorders:12.5f} {maxBprice:12.5f} {maxSprice:12.5f} {maxSorders:12.5f} {spread:12.5f}")
+    # Use best bid / ask from the snapshot
+    BuyPrice  = float(bids[0][0])
+    SellPrice = float(asks[0][0])
+
+    print(f"{Blank:4} {'Volume':>12} {'Buy':>12} {'Sell':>12} {'Volume':>12} {'Spread':>12}")
+    print(f"{Blank:4} {Blank:12} {BuyPrice:12.5f} {SellPrice:12.5f} {Blank:12} {BuyPrice-SellPrice:12.5f}")
+    print(f"{'-'*4:4} {'-'*12:12} {'-'*12:12} {'-'*12:12} {'-'*12:12} {'-'*12:12}")
+
+    maxBorders = 0.0
+    maxSorders = 0.0
+    maxBprice  = 0.0
+    maxSprice  = 0.0
+
+    for i in range(eff_depth):
+        bpx, bqty = float(bids[i][0]), float(bids[i][1])
+        apx, aqty = float(asks[i][0]), float(asks[i][1])
+        spread    = apx - bpx
+
+        if bqty > maxBorders:
+            maxBorders = bqty
+            maxBprice  = bpx
+        if aqty > maxSorders:
+            maxSorders = aqty
+            maxSprice  = apx
+
+        print(f"{i+1:4} {bqty:12.5f} {bpx:12.5f} {apx:12.5f} {aqty:12.5f} {spread:12.5f}")
+
+    spread = maxSprice - maxBprice
+    print(f"{'-'*4:4} {'-'*12:12} {'-'*12:12} {'-'*12:12} {'-'*12:12} {'-'*12:12}")
+    print(f"MAX  {maxBorders:12.5f} {maxBprice:12.5f} {spread:12.5f} {maxSprice:12.5f} {maxSorders:12.5f}")

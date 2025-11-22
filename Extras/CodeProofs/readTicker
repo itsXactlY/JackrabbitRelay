@@ -27,7 +27,12 @@ else:
 
 markets=relay.GetMarkets()
 
+last = None
 while True:
-    ticker=relay.GetTicker(symbol=asset)
-    print(f"{ticker['DateTime']} {ticker['Ask']:.8f} {ticker['Spread']:.8f} {ticker['Bid']:.8f}")
+    ticker = relay.GetTicker(symbol=asset)
+    key = (ticker['Ask'], ticker['Bid'])
+
+    if key != last:
+        print(f"{ticker['DateTime']} {ticker['Ask']:.8f} {ticker['Spread']:.8f} {ticker['Bid']:.8f}")
+        last = key
 

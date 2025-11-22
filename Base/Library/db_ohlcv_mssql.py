@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, List
 import time
-
 import fast_mssql
 
 #  Connection config
@@ -126,7 +125,7 @@ class ReadOnlyOHLCV:
         timeframe: str,
         start: datetime,
         end: Optional[datetime] = None,
-        limit: Optional[int] = None,
+        limit: int = 1,
         strict_gt: bool = False,
     ) -> List[dict]:
         """
@@ -137,39 +136,28 @@ class ReadOnlyOHLCV:
             end = datetime.now(timezone.utc)
 
         fqtn = self._table_name(exchange, symbol)
-        comp = ">" if strict_gt else ">="
-        top_clause = f"TOP {int(limit)} " if limit else ""
 
-        # NOTE: no .%f here; pure second precision to keep SQL literal simple
-        start_str = start.strftime("%Y-%m-%d %H:%M:%S")
-        end_str   = end.strftime("%Y-%m-%d %H:%M:%S")
 
         if self.mode == "global":
             ex = self._qv(exchange)
             sym = self._qv(symbol)
-            tf  = self._qv(timeframe)
             query = (
-                f"SELECT {top_clause}"
+                f"SELECT TOP ({int(limit)}) "
                 f"timestamp, [open], high, low, [close], volume "
                 f"FROM {fqtn} "
-                f"WHERE exchange='{ex}' AND symbol='{sym}' AND timeframe='{tf}' "
-                f"AND timestamp {comp} '{start_str}' AND timestamp < '{end_str}' "
-                f"ORDER BY timestamp ASC;"
+                f"WHERE exchange='{ex}' AND symbol='{sym}' AND timeframe='{timeframe}' "
+                f"ORDER BY timestamp DESC;"
             )
         else:
-            tf = self._qv(timeframe)
             query = (
-                f"SELECT {top_clause}"
+                f"SELECT TOP ({int(limit)}) "
                 f"timestamp, [open], high, low, [close], volume "
                 f"FROM {fqtn} "
-                f"WHERE timeframe='{tf}' "
-                f"AND timestamp {comp} '{start_str}' AND timestamp < '{end_str}' "
-                f"ORDER BY timestamp ASC;"
+                f"WHERE timeframe='{timeframe}' "
+                f"ORDER BY timestamp DESC;"
             )
 
-        # Uncomment for one-shot debugging if something still explodes
-        print("DEBUG OHLCV SQL:", query)
-
+        print("DEBUG LATEST OHLCV SQL:", query)
         rows = fast_mssql.fetch_data_from_db(self._conn_str, query)
         cols = ["timestamp", "open", "high", "low", "close", "volume"]
         return [dict(zip(cols, r)) for r in rows]
@@ -186,6 +174,11 @@ class ReadOnlyTradesAgg(ReadOnlyOHLCV):
       This is perfect for microstructure / tick strategies, but NOT for ATR/ASI/etc.
       For those, use candle mode (OHLCV).
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # key: (exchange_lower, symbol_string) -> last_id
+        self._last_ids: dict[tuple[str, str], int] = {}
 
     @staticmethod
     def _qv(s: str) -> str:
@@ -249,5 +242,4 @@ class ReadOnlyTradesAgg(ReadOnlyOHLCV):
                 }
             )
         return out
-
 

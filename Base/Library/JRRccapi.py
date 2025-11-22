@@ -16,6 +16,7 @@ import JRRsupport
 
 # CCAPI Python bindings
 import ccapi
+import fast_mssql
 
 # Database reader classes
 from db_ohlcv_mssql import (
@@ -36,7 +37,7 @@ class ccapiCrypto:
                  DataDirectory=None):
         """
         Initialize CCAPI broker
-        
+
         Args:
             Exchange: Exchange name (binance, okx, bybit, etc.)
             Config: Configuration dict
@@ -101,12 +102,12 @@ class ccapiCrypto:
         self._markets_cache = {}
         
         # Initialize CCAPI
-        self._init_ccapi()
+        # self._init_ccapi()
         
         # Get markets from database
         self.Markets = self._GetMarkets()
         
-        self.Log.Write(f"CCAPI Broker initialized for {self.Exchange}")
+        self.Log.Write(f"CCAPI Broker initialized for {self.Exchange} on BTQuant BigBrain")
     
     def _init_db_config(self) -> MSSQLFeedConfig:
         return MSSQLFeedConfig(
@@ -249,22 +250,20 @@ class ccapiCrypto:
     
     def _GetMarkets(self) -> Dict:
         """
-        Get markets from database
+        Get markets from database - OPTIMIZED FOR ZERO BLOCKING
         Returns dict of market info compatible with CCXT format
         """
         if self._markets_cache:
             return self._markets_cache
         
         try:
-            import fast_mssql
             conn_str = self.db_config.connection_string()
-            
-            # Query distinct symbols for this exchange
             sql = f"""
             SELECT DISTINCT symbol
-            FROM dbo.orderbook_snapshots
+            FROM dbo.orderbook_snapshots WITH (NOLOCK)
             WHERE exchange = '{self._quote(self.Exchange)}'
-            ORDER BY symbol;
+            ORDER BY symbol
+            OPTION (MAXDOP 1);
             """
             
             rows = fast_mssql.fetch_data_from_db(conn_str, sql)
@@ -298,7 +297,7 @@ class ccapiCrypto:
                 }
             
             self._markets_cache = markets
-            print(markets)
+            print(f"✅ Loaded {len(markets)} markets from DB (zero blocking)")
             return markets
             
         except Exception as e:
@@ -307,75 +306,71 @@ class ccapiCrypto:
     
     def GetTicker(self, **kwargs) -> Dict:
         """
-        Get latest ticker from database
-        Uses latest trades to build bid/ask
+        Live ticker from dbo.orderbook_snapshots - ZERO BLOCKING
+        
+        - No candles, no trades, no history.
+        - Always uses latest snapshot: top-of-book bid/ask + spread.
         """
         try:
-            symbol = kwargs.get('pair', kwargs.get('symbol'))
+            symbol = kwargs.get("pair", kwargs.get("symbol"))
             if not symbol:
                 return {}
+
+            # CLI / JRR uses btcusdt / BTC/USDT etc -> DB uses BTCUSDT or BTC-USDT
+            db_symbol = symbol.replace("/", "").upper()
+
+            conn_str = self.db_config.connection_string()
+            market_type = self.Active.get("Market", "spot")
+
+            # ✅ CRITICAL OPTIMIZATIONS:
+            # - NOLOCK: Zero blocking (accept dirty reads for real-time data)
+            # - FORCESEEK: Prevent table scans during heavy inserts
+            # - Explicit index hint if you have one on (exchange, symbol, timestamp DESC)
+            sql = f"""
+            SELECT TOP (1)
+                [timestamp],
+                [bids],
+                [asks]
+            FROM dbo.orderbook_snapshots WITH (NOLOCK, FORCESEEK)
+            WHERE exchange    = '{self._quote(self.Exchange)}'
+            AND symbol      = '{self._quote(db_symbol)}'
+            AND market_type = '{self._quote(market_type)}'
+            ORDER BY [timestamp] DESC
+            OPTION (MAXDOP 1);
+            """
+
+            rows = fast_mssql.fetch_data_from_db(conn_str, sql)
             
-            # Normalize symbol
-            symbol = symbol.replace('/', '-')
+            if not rows:
+                return {}
             
-            # Get latest trades
-            now = datetime.now(timezone.utc)
-            start = now - timedelta(seconds=10)
+            ts, bids_json, asks_json = rows[0]
             
-            trades = self.trades_reader.get_ticks_by_id(
-                exchange=self.Exchange,
-                symbol=symbol,
-                last_id=0,
-                limit=100
-            )
+            # Parse orderbook
+            bids = json.loads(bids_json) if isinstance(bids_json, str) else bids_json
+            asks = json.loads(asks_json) if isinstance(asks_json, str) else asks_json
             
-            if trades:
-                latest = trades[-1]
-                close = float(latest['close'])
-                
-                # Simple bid/ask from recent prices
-                prices = [float(t['close']) for t in trades[-20:]]
-                bid = min(prices) if prices else close
-                ask = max(prices) if prices else close
-                
-                return {
-                    'DateTime': latest['timestamp'].isoformat() if isinstance(latest['timestamp'], datetime) else None,
-                    'Ask': ask,
-                    'Bid': bid,
-                    'Spread': abs(ask - bid)
-                }
+            # Extract best bid/ask
+            best_bid = float(bids[0][0]) if bids else 0.0
+            best_ask = float(asks[0][0]) if asks else 0.0
             
-            # Fallback to OHLCV
-            ohlcv = self.ohlcv_reader.get_ohlcv(
-                exchange=self.Exchange,
-                symbol=symbol,
-                timeframe='1m',
-                start=start,
-                end=now,
-                limit=1
-            )
-            
-            if ohlcv:
-                close = float(ohlcv[0]['close'])
-                return {
-                    'DateTime': ohlcv[0]['timestamp'].isoformat(),
-                    'Ask': close,
-                    'Bid': close,
-                    'Spread': 0
-                }
-            
-            raise Exception(f"No ticker data for {symbol}")
+            return {
+                'DateTime': ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
+                'Ask': best_ask,
+                'Bid': best_bid,
+                'Spread': abs(best_ask - best_bid)
+            }
             
         except Exception as e:
             self.Log.Error("GetTicker", str(e))
-            raise
-    
+            return {}
+
     def GetOHLCV(self, **kwargs) -> List[List]:
         """Get OHLCV data from database"""
         try:
             symbol = kwargs.get('symbol', kwargs.get('pair'))
             timeframe = kwargs.get('timeframe', '1m')
-            limit = kwargs.get('limit', 100)
+            limit = kwargs.get('limit', 1)
             since = kwargs.get('since')
             
             # Normalize symbol
@@ -473,7 +468,7 @@ class ccapiCrypto:
             # Otherwise fetch fresh balance
             correlation_id = f"balance_{int(time.time() * 1000)}"
             
-            # 👇 IMPORTANT: correlation_id must be passed into the Request
+            # IMPORTANT: correlation_id must be passed into the Request
             request = ccapi.Request(
                 ccapi.Request.Operation_GET_ACCOUNT_BALANCES,  # in your build this may be Operation_GET_ACCOUNT_BALANCES
                 self.Exchange,
@@ -617,7 +612,7 @@ class ccapiCrypto:
                 order = self._parse_order_response(response)
                 
                 if order and order.get('id'):
-                    self.Log.Write(f"|- Order Confirmation ID: {order['id']}")
+                    self.Log.Write(f"|- CCAPI Order Confirmation ID: {order['id']}")
                     
                     # Write order to database for audit trail
                     self._write_order_to_database(order)
@@ -816,11 +811,34 @@ class ccapiCrypto:
 
         return balance
 
-    def _parse_position_response(self, event: ccapi.Event) -> List[Dict]:
-        """Parse positions response from CCAPI event"""
+    def _parse_position_response(self, event):
+        """
+        Parse positions response from CCAPI event
+        
+        CRITICAL: Must handle both ccapi.Event AND pre-parsed Python lists
+        because _handle_response() converts Events to lists before queuing.
+        """
         positions = []
         
-        try:
+        # Type guard: check if already converted to list
+        if isinstance(event, list):
+            # Already parsed by _handle_response as list[list[dict]]
+            # Format: [[{'ASSET': 'BTC', 'QUANTITY': '1.5', ...}, ...], ...]
+            for msg_elems in event:
+                for elem_dict in msg_elems:
+                    position = {
+                        'symbol': elem_dict.get('INSTRUMENT', elem_dict.get('SYMBOL', '')),
+                        'side': elem_dict.get('POSITION_SIDE', elem_dict.get('SIDE', 'long')).lower(),
+                        'contracts': float(elem_dict.get('POSITION_QUANTITY', elem_dict.get('QUANTITY', 0))),
+                        'entryPrice': float(elem_dict.get('POSITION_ENTRY_PRICE', elem_dict.get('ENTRY_PRICE', 0))),
+                        'unrealizedPnl': float(elem_dict.get('UNREALIZED_PNL', 0))
+                    }
+                    if position['symbol']:
+                        positions.append(position)
+            return positions
+        
+        # Original Event handling (if _send_request_sync returns raw Event)
+        elif hasattr(event, 'getMessageList'):
             for message in event.getMessageList():
                 for element in message.getElementList():
                     name_value_map = element.getNameValueMap()
@@ -835,11 +853,10 @@ class ccapiCrypto:
                     
                     if position['symbol']:
                         positions.append(position)
-            
-        except Exception as e:
-            self.Log.Error("Parse Positions", str(e))
+            return positions
         
-        return positions
+        else:
+            raise TypeError(f"Expected ccapi.Event or list, got {type(event)}")
     
     def _parse_order_response(self, event: ccapi.Event) -> Dict:
         """Parse order response from CCAPI event"""
@@ -1026,7 +1043,6 @@ class ccapiCrypto:
             except Exception:
                 pass
 
-
 class CCAPIEventHandler(ccapi.EventHandler):
     """
     Event handler for CCAPI events
@@ -1083,9 +1099,9 @@ class CCAPIEventHandler(ccapi.EventHandler):
                             "elements": elems,
                         })
                     # Truncate to keep logs sane
-                    self.broker.Log.Write(
-                        "CCAPI BALANCE RAW: " + json.dumps(debug_payload)[:2000]
-                    )
+                    # self.broker.Log.Write(
+                    #     "CCAPI BALANCE RAW: " + json.dumps(debug_payload)[:2000]
+                    # )
                 except Exception as e:
                     self.broker.Log.Error("Debug Balance", f"{e}")
 

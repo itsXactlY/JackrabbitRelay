@@ -8,7 +8,6 @@
 import sys
 sys.path.append('/home/JackrabbitRelay2/Base/Library')
 import os
-import signal
 import atexit
 import json
 import requests
@@ -661,6 +660,8 @@ class JackrabbitRelay:
     # Rotate API key/Secret
 
     def RotateKeys(self):
+        if self.Framework=='ccapi':
+            return
         if self.CurrentKey<0:
             self.CurrentKey=(os.getpid()%len(self.Keys))
         else:
@@ -673,6 +674,9 @@ class JackrabbitRelay:
     # Carry out rate limit
 
     def EnforceRateLimit(self):
+        if self.Framework=='ccapi': # NOTE :: For testing, not rely pure on DB, its skipping here. Try first, regret later.
+            return
+
         if 'RateLimit' in self.Active:
             ratelimit=int(self.Active['RateLimit'])
         else:
@@ -719,6 +723,7 @@ class JackrabbitRelay:
                 self.Config,
                 self.Active,
                 Notify=True,
+                DataDirectory=self.Directories['Data']
             )
         elif self.Framework=='ccxt':
             self.Broker=JRRccxt.ccxtCrypto(self.Exchange,self.Config,self.Active,DataDirectory=self.Directories['Data'])
